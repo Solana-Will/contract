@@ -6,13 +6,26 @@ use solana_program::{
     msg,
     program_error::ProgramError,
     pubkey::Pubkey,
+    clock::{UnixTimestamp, Clock},
+    sysvar::Sysvar,
 };
 
 /// Define the type of state stored in accounts
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
-pub struct GreetingAccount {
-    /// number of greetings
-    pub counter: u32,
+pub struct WillData {
+    pub owner: Pubkey,
+    pub last_access_ts: UnixTimestamp,
+    pub inheritor1: Pubkey,
+    pub inheritor1_share: u8,
+    pub inheritor2: Pubkey,
+    pub inheritor2_share: u8,
+    pub inheritor3: Pubkey,
+    pub inheritor3_share: u8,
+}
+
+#[derive(BorshDeserialize, Debug)]
+pub struct TakeInstruction {
+    pub lamports: u64
 }
 
 // Declare and export the program's entrypoint
@@ -22,7 +35,7 @@ entrypoint!(process_instruction);
 pub fn process_instruction(
     program_id: &Pubkey, // Public key of the account the hello world program was loaded into
     accounts: &[AccountInfo], // The account to say hello to
-    _instruction_data: &[u8], // Ignored, all helloworld instructions are hellos
+    _instruction_data: &[u8],
 ) -> ProgramResult {
     msg!("Hello World Rust program entrypoint");
 
@@ -31,19 +44,61 @@ pub fn process_instruction(
 
     // Get the account to say hello to
     let account = next_account_info(accounts_iter)?;
+    let sender = next_account_info(accounts_iter)?;
+
+    msg!("Got accounts: {} and {}", account.key, sender.key);
 
     // The account must be owned by the program in order to modify its data
     if account.owner != program_id {
-        msg!("Greeted account does not have the correct program id");
+        msg!("Greeted account {} (owner = {}) does not have the correct program id {}", account.key, account.owner, program_id);
         return Err(ProgramError::IncorrectProgramId);
     }
+    
+    let mut will_data = WillData::try_from_slice(&account.data.borrow()[..139])?;
+    msg!("Deserialized");
+    // 0 -> Init
+    // 1 -> Take back SOL ([amount])
+    match _instruction_data[0] {
+        0 => {
+            if will_data.owner == Pubkey::new_from_array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]) {
+            // if account.data.borrow()[0] == 0 {
+                msg!("Initializing...");
+                will_data.owner = *sender.key;
+                will_data.last_access_ts = Clock::get()?.unix_timestamp;
+                will_data.inheritor1 = Pubkey::new_from_array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+                will_data.inheritor1_share = 33;
+                will_data.inheritor2 = Pubkey::new_from_array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+                will_data.inheritor2_share = 33;
+                will_data.inheritor3 = Pubkey::new_from_array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+                will_data.inheritor3_share = 34;
+                // will_data.owner = *sender.key;
+                will_data.serialize(&mut &mut account.data.borrow_mut()[..])?;
+            } else {
+                msg!("Trying to re-initialize account {}!", will_data.owner);
+                return Err(ProgramError::AccountAlreadyInitialized);
+            }
+        },
+        1 => {
+            if will_data.owner != *sender.key {
+                msg!("If you {} are not an owner {} you can not take back sol", *sender.key, will_data.owner);
+                return Err(ProgramError::InvalidAccountData);
+            }
 
+            **account.try_borrow_mut_lamports()? -= 1000000000;
+            **sender.try_borrow_mut_lamports()? += 1000000000;
+        },
+        2_u8..=u8::MAX => {}
+    }
+    //
     // Increment and store the number of times the account has been greeted
-    let mut greeting_account = GreetingAccount::try_from_slice(&account.data.borrow())?;
-    greeting_account.counter += 1;
-    greeting_account.serialize(&mut &mut account.data.borrow_mut()[..])?;
+    //
+    // greeting_account.counter += 1;
+    // greeting_account.serialize(&mut &mut account.data.borrow_mut()[..])?;
+    
+    //msg!("Greeted {} time(s)!", greeting_account.counter);
 
-    msg!("Greeted {} time(s)!", greeting_account.counter);
+// }
+    // account.data.borrow_mut()[0] = 0x1;
 
     Ok(())
 }
@@ -77,21 +132,21 @@ mod test {
         let accounts = vec![account];
 
         assert_eq!(
-            GreetingAccount::try_from_slice(&accounts[0].data.borrow())
+            WillData::try_from_slice(&accounts[0].data.borrow())
                 .unwrap()
                 .counter,
             0
         );
         process_instruction(&program_id, &accounts, &instruction_data).unwrap();
         assert_eq!(
-            GreetingAccount::try_from_slice(&accounts[0].data.borrow())
+            WillData::try_from_slice(&accounts[0].data.borrow())
                 .unwrap()
                 .counter,
             1
         );
         process_instruction(&program_id, &accounts, &instruction_data).unwrap();
         assert_eq!(
-            GreetingAccount::try_from_slice(&accounts[0].data.borrow())
+            WillData::try_from_slice(&accounts[0].data.borrow())
                 .unwrap()
                 .counter,
             2
